@@ -1,0 +1,12 @@
+# Data directories
+original_papers/
+extracted_papers/
+
+# Python environment and cache
+.conda/
+__pycache__/
+*.pyc
+
+# System files
+.DS_Store
+.ipynb_checkpoints/
