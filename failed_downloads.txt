@@ -1,2 +1,5 @@
 Ul683x8lpK - FlexWorld: Progressively Expanding 3D Scenes for Flexible-View Exploration
 g2vViuEVDS - Intrinsic Goals for Autonomous Agents: Model-Based Exploration in Virtual Zebrafish Predicts Ethological Behavior and Whole-Brain Dynamics
+
+# did not finish:
+Thought_Communication_in_Multiagent_Collaboration_tq9lyV9Cml

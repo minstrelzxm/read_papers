@@ -1,6 +1,7 @@
 # Data directories
 original_papers/
 extracted_papers/
+failed_downloads.txt
 
 # Python environment and cache
 .conda/

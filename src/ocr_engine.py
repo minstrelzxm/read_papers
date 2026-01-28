@@ -53,8 +53,8 @@ class OCREngine:
         
         # Convert PDF to images
         try:
-            # Set a meaningful timeout (e.g., 60 seconds per PDF) to avoid hangs
-            images = convert_from_path(pdf_path, timeout=60)
+            # Set a meaningful timeout (e.g., 600 seconds per PDF) to avoid hangs
+            images = convert_from_path(pdf_path, timeout=600)
         except Exception as e:
             print(f"Error converting PDF to images: {e}")
             return False
