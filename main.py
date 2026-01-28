@@ -99,7 +99,7 @@ def main():
                 # Run OCR in a separate process to isolate CUDA crashes
                 try:
                     cmd = [sys.executable, "src/ocr_engine.py", pdf_path, extracted_dir]
-                    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=600) # 10 min timeout per paper
+                    result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', timeout=1200) # 20 min timeout per paper
                     
                     if result.returncode != 0:
                         print(f"OCR Failed for {paper_name}")
