@@ -37,7 +37,7 @@ sudo apt-get install poppler-utils
 
 2. **Create Conda Environment**:
    ```bash
-   conda create -n read_papers python=3.10
+   conda create -n read_papers python=3.12
    conda activate read_papers
    ```
 
@@ -101,9 +101,8 @@ python main.py --limit 5
 │       └── pages/               # Per-page images and raw data
 ├── src/
 │   ├── analyzer.py         # Logic for OpenAI/Local VLM analysis
-│   ├── ocr_engine.py       # DeepSeek-OCR wrapping logic
-│   ├── scraper.py          # OpenReview scraping logic
-│   └── single_paper_ocr.py # Subprocess entry point for OCR
+│   ├── ocr_engine.py       # DeepSeek-OCR wrapping logic & Subprocess entry point
+│   └── scraper.py          # OpenReview scraping logic
 └── main.py                 # Entry point CLI
 ```
 

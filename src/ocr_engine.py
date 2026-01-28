@@ -124,32 +124,53 @@ class OCREngine:
         return True
 
 if __name__ == "__main__":
-    # Test on one file
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
-    input_dir = os.path.join(base_dir, 'original_papers')
-    output_dir = os.path.join(base_dir, 'extracted_papers')
-    
-    files = sorted([f for f in os.listdir(input_dir) if f.endswith('.pdf')])
-    
-    if files:
-        print(f"Found {len(files)} PDFs. Starting batch OCR...")
-        engine = OCREngine()
-        
-        for i, pdf_file in enumerate(tqdm(files)):
-            paper_name = os.path.splitext(pdf_file)[0]
-            existing_output = os.path.join(output_dir, paper_name)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("pdf_path", nargs="?", help="Path to PDF")
+    parser.add_argument("output_dir", nargs="?", help="Output directory")
+    args = parser.parse_args()
+
+    # If arguments are provided, run single paper mode (subprocess mode)
+    if args.pdf_path and args.output_dir:
+        try:
+            engine = OCREngine()
+            success = engine.process_pdf(args.pdf_path, args.output_dir)
+            if not success:
+                sys.exit(1)
+        except Exception as e:
+            print(f"OCR Crash: {e}", file=sys.stderr)
+            sys.exit(1)
             
-            # Skip if already processed
-            if os.path.exists(existing_output) and os.path.exists(os.path.join(existing_output, "full_extracted.md")):
-                # print(f"Skipping {paper_name} (already extracted)")
-                continue
-                
-            print(f"[{i+1}/{len(files)}] Processing {paper_name}...")
-            try:
-                engine.process_pdf(os.path.join(input_dir, pdf_file), output_dir)
-            except Exception as e:
-                print(f"Failed to process {paper_name}: {e}")
-                # Continue to next paper even if one fails
-                continue
+    # Otherwise run batch mode (default/debug behavior)
     else:
-        print("No PDF files found to process.")
+        # Test on files in directory
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../'))
+        input_dir = os.path.join(base_dir, 'original_papers')
+        output_dir = os.path.join(base_dir, 'extracted_papers')
+        
+        if not os.path.exists(input_dir):
+            print("No arguments provided and 'original_papers' not found.")
+            sys.exit(1)
+
+        files = sorted([f for f in os.listdir(input_dir) if f.endswith('.pdf')])
+        
+        if files:
+            print(f"Found {len(files)} PDFs. Starting batch OCR...")
+            engine = OCREngine()
+            
+            for i, pdf_file in enumerate(tqdm(files)):
+                paper_name = os.path.splitext(pdf_file)[0]
+                existing_output = os.path.join(output_dir, paper_name)
+                
+                # Skip if already processed
+                if os.path.exists(existing_output) and os.path.exists(os.path.join(existing_output, "full_extracted.md")):
+                    continue
+                    
+                print(f"[{i+1}/{len(files)}] Processing {paper_name}...")
+                try:
+                    engine.process_pdf(os.path.join(input_dir, pdf_file), output_dir)
+                except Exception as e:
+                    print(f"Failed to process {paper_name}: {e}")
+                    continue
+        else:
+            print("No PDF files found to process.")

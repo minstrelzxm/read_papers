@@ -1,11 +1,24 @@
-openreview-py
-pdf2image
-torch
-transformers
-einops
-addict
-easydict
-accelerate
-Pillow
-requests
-tqdm
+
+# Core dependencies
+openreview-py>=1.55.0
+pdf2image>=1.17.0
+requests>=2.32.0
+tqdm>=4.67.0
+
+# PyTorch (Pinned stable version)
+torch==2.5.1
+torchvision==0.20.1
+
+# Transformers & AI (Pinned for DeepSeek-OCR compatibility)
+transformers==4.46.3
+accelerate>=1.12.0
+einops>=0.8.0
+safetensors>=0.7.0
+
+# Utilities
+addict>=2.4.0
+easydict>=1.13
+Pillow>=11.0.0
+numpy>=2.0.0
+matplotlib>=3.10.0  # Required for some visualizations and unexpected dependencies in OCR
+openai>=2.15.0     # For Online Analysis
