@@ -1,5 +1,6 @@
 import argparse
 
+from src.ocr_engine import DEFAULT_EXTRACTION_METHOD
 from src.pipeline import run_pipeline
 
 
@@ -19,7 +20,7 @@ def main():
     parser.add_argument(
         "--skip-ocr",
         action="store_true",
-        help="Skip OCR processing",
+        help="Skip Stage 2 text/image extraction",
     )
     parser.add_argument(
         "--skip-analysis",
@@ -48,6 +49,12 @@ def main():
         help="Base URL for OpenAI-compatible providers",
     )
     parser.add_argument(
+        "--extraction-method",
+        choices=["native", "ocr"],
+        default=DEFAULT_EXTRACTION_METHOD,
+        help="Stage 2 extraction backend",
+    )
+    parser.add_argument(
         "--ocr-model",
         default=None,
         help="OCR model name",
@@ -69,6 +76,7 @@ def main():
         model_name=args.model,
         api_key=args.api_key,
         base_url=args.base_url,
+        extraction_method=args.extraction_method,
         ocr_model_name=args.ocr_model,
         ocr_device=args.ocr_device,
     )

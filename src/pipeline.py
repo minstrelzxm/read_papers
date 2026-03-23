@@ -5,7 +5,13 @@ from pathlib import Path
 from tqdm import tqdm
 
 from src.analyzer import analyze_paper_folder, build_analyzer
-from src.ocr_engine import DEFAULT_OCR_MODEL, OCREngine, is_ocr_complete, paper_output_dir
+from src.ocr_engine import (
+    DEFAULT_EXTRACTION_METHOD,
+    DEFAULT_OCR_MODEL,
+    build_extraction_engine,
+    is_ocr_complete,
+    paper_output_dir,
+)
 from src.scraper import download_papers, get_neurips_2025_papers
 
 
@@ -22,6 +28,7 @@ def run_pipeline(
     api_key=None,
     base_url=None,
     ocr_timeout=DEFAULT_OCR_TIMEOUT,
+    extraction_method=DEFAULT_EXTRACTION_METHOD,
     ocr_model_name=DEFAULT_OCR_MODEL,
     ocr_device="cuda",
 ):
@@ -55,7 +62,7 @@ def run_pipeline(
         return
 
     if not skip_ocr:
-        print("--- Step 2: OCR Processing ---")
+        print("--- Step 2: Text/Image Extraction ---")
         pending_ocr_files = [
             pdf_path
             for pdf_path in pdf_files
@@ -63,24 +70,29 @@ def run_pipeline(
         ]
         if pending_ocr_files:
             print(
-                f"Loading OCR engine once for {len(pending_ocr_files)} pending paper(s)..."
+                f"Loading extraction engine '{extraction_method}' once for "
+                f"{len(pending_ocr_files)} pending paper(s)..."
             )
-            ocr_engine = OCREngine(model_name=ocr_model_name, device=ocr_device)
+            ocr_engine = build_extraction_engine(
+                method=extraction_method,
+                model_name=ocr_model_name,
+                device=ocr_device,
+            )
         else:
-            print("All OCR outputs already exist. Skipping OCR engine load.")
+            print("All extraction outputs already exist. Skipping Stage 2 engine load.")
             ocr_engine = None
     else:
         ocr_engine = None
 
     if not skip_ocr and ocr_engine is not None:
-        for pdf_path in tqdm(pdf_files, desc="OCR Pipeline"):
+        for pdf_path in tqdm(pdf_files, desc="Stage 2 Pipeline"):
             paper_name = pdf_path.stem
             paper_dir = Path(paper_output_dir(pdf_path, extracted_dir))
 
             if is_ocr_complete(paper_dir):
                 continue
 
-            print(f"Running OCR on {paper_name}...")
+            print(f"Running Stage 2 extraction on {paper_name}...")
             success = run_ocr_in_process(
                 ocr_engine,
                 pdf_path,
@@ -138,16 +150,16 @@ def is_analysis_complete(paper_dir):
 
 def run_ocr_in_process(ocr_engine, pdf_path, extracted_dir, timeout=DEFAULT_OCR_TIMEOUT):
     if ocr_engine is None:
-        print("OCR engine is unavailable.")
+        print("Stage 2 extraction engine is unavailable.")
         return False
 
-    if timeout != DEFAULT_OCR_TIMEOUT:
+    if timeout != DEFAULT_OCR_TIMEOUT and getattr(ocr_engine, "method_name", None) == "ocr":
         print("Per-paper OCR timeout is not enforced in the in-process batch runner.")
 
     try:
         return bool(ocr_engine.process_pdf(pdf_path, extracted_dir))
     except Exception as exc:
-        print(f"OCR failed for {Path(pdf_path).stem}: {exc}")
+        print(f"Stage 2 extraction failed for {Path(pdf_path).stem}: {exc}")
         return False
 
 

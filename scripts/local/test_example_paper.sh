@@ -6,6 +6,7 @@ cd "$ROOT_DIR"
 
 TEST_PDF="${TEST_PDF:-$ROOT_DIR/test_folder/3BASiL_An_Algorithmic_Framework_for_Sparse_plus_LowRank_Compression_of_LLMs_byNNv5Et10.pdf}"
 EXTRACTED_DIR="${EXTRACTED_DIR:-$ROOT_DIR/test_folder/ocr_extracted}"
+EXTRACTION_METHOD="${EXTRACTION_METHOD:-native}"
 OCR_MODEL="${OCR_MODEL:-deepseek-ai/DeepSeek-OCR-2}"
 ANALYZER_PROVIDER="${ANALYZER_PROVIDER:-local}"
 LOCAL_MODEL="${LOCAL_MODEL:-Qwen/Qwen2.5-1.5B-Instruct}"
@@ -67,7 +68,8 @@ if [[ "$SMOKE_MODE" != "summary" && "$CLEAN_OUTPUT" == "1" && -d "$OUTPUT_DIR" ]
 fi
 
 echo "Using test PDF: $TEST_PDF"
-echo "OCR output dir: $OUTPUT_DIR"
+echo "Extraction output dir: $OUTPUT_DIR"
+echo "Extraction method: $EXTRACTION_METHOD"
 echo "Smoke mode: $SMOKE_MODE"
 echo
 
@@ -81,25 +83,26 @@ else
   if [[ "$REUSE_OCR" == "1" && -s "$OCR_OUTPUT_FILE" ]]; then
     echo "Reusing existing OCR output: $OCR_OUTPUT_FILE"
   else
-    echo "=== Stage 2: OCR ==="
+    echo "=== Stage 2: Extraction ==="
     python "$ROOT_DIR/src/ocr_engine.py" \
       "$TEST_PDF" \
       "$EXTRACTED_DIR" \
+      --method "$EXTRACTION_METHOD" \
       --model-name "$OCR_MODEL"
   fi
 
   if [[ ! -s "$OCR_OUTPUT_FILE" ]]; then
-    echo "OCR smoke test failed: missing or empty $OCR_OUTPUT_FILE" >&2
+    echo "Stage 2 smoke test failed: missing or empty $OCR_OUTPUT_FILE" >&2
     exit 1
   fi
 
-  echo "OCR smoke test passed: $OCR_OUTPUT_FILE"
+  echo "Stage 2 smoke test passed: $OCR_OUTPUT_FILE"
 fi
 
 if [[ "$SMOKE_MODE" == "ocr" ]]; then
   echo
   echo "Smoke test completed."
-  echo "OCR output: $OCR_OUTPUT_FILE"
+  echo "Extraction output: $OCR_OUTPUT_FILE"
   exit 0
 fi
 
@@ -125,5 +128,5 @@ fi
 
 echo
 echo "Smoke test completed."
-echo "OCR output: $OCR_OUTPUT_FILE"
+echo "Extraction output: $OCR_OUTPUT_FILE"
 echo "Summary report: $ANALYSIS_OUTPUT_FILE"

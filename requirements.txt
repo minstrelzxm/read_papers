@@ -22,6 +22,7 @@ easydict>=1.13
 Pillow>=11.0.0
 numpy>=2.0.0
 matplotlib>=3.10.0  # Required for some visualizations and unexpected dependencies in OCR
+PyMuPDF>=1.27.0    # Layout-detection and PDF inspection utilities
 openai>=2.15.0     # For Online Analysis
 anthropic>=0.39.0  # For Claude online analysis
 

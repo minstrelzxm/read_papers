@@ -1,235 +1,264 @@
 # Phase 2 OCR Review
 
-This note focuses on the second development phase: PDF to structured OCR output.
+This note tracks the current state of the second development phase: PDF to structured OCR output.
 
 Reviewed files:
 
-- `main.py`
 - `src/ocr_engine.py`
-- `src/analyzer.py` where it depends on OCR output format
-- auxiliary OCR-related scripts: `run_ocr_robust.py` and `trad_ocr.py`
+- `src/pipeline.py`
+- `main.py`
+- `scripts/local/test_example_paper.sh`
+- `src/analyzer.py` where it depends on OCR output layout
 
-Sanity check:
+Sanity and runtime checks performed during the latest fix cycle:
 
-- `python -m py_compile main.py src/scraper.py src/ocr_engine.py src/analyzer.py run_ocr_robust.py trad_ocr.py` passed.
-- I did not find syntax errors.
+- `python -m py_compile main.py src/pipeline.py src/ocr_engine.py` passed.
+- `flash-attn==2.7.3` was installed successfully inside `./.conda`.
+- `OCREngine` now loads with `flash_attention_2` on the project GPU stack.
+- A live one-page OCR probe on the example paper produced valid Markdown output.
+- A batch orchestration test confirmed the OCR model is loaded once and reused across multiple PDFs in a single run.
 
-## Status After The OCR Runtime Fix
+## Current Status
 
-The original OCR failure was caused by a runtime mismatch, not by the per-page OCR loop itself:
+Phase 2 is in a much better state than before.
 
-- `DeepSeek-OCR-2` was being run on `transformers==5.3.0`, which produced repeated `<｜begin▁of▁sentence｜>` output instead of real Markdown.
-- Rebuilding `./.conda` to the official-style DeepSeek stack (`torch==2.6.0`, `transformers==4.46.3`, `tokenizers==0.20.3`) restored valid OCR output.
-- `flash-attn==2.7.3` still cannot be installed on this host because `nvcc` and `CUDA_HOME` are unavailable, so the code currently uses eager attention as a host-compatible fallback.
+The major runtime and orchestration issues that were blocking development are now fixed:
 
-The following earlier issues are now fixed in code:
+- The broken `DeepSeek-OCR-2` output made of repeated `<｜begin▁of▁sentence｜>` tokens is fixed.
+- The project now runs on an official-style DeepSeek OCR stack in `./.conda`:
+  - `torch==2.6.0`
+  - `transformers==4.46.3`
+  - `tokenizers==0.20.3`
+  - `flash-attn==2.7.3`
+- OCR runs one page at a time instead of rasterizing an entire PDF up front.
+- The OCR model is loaded once per batch run instead of once per PDF.
+- Invalid OCR output is rejected instead of being silently accepted.
+- The smoke-test path is now documented in code through `scripts/local/test_example_paper.sh`.
 
-- PDFs are rendered one page at a time instead of rasterizing the full document up front.
-- Invalid special-token OCR output is rejected instead of being silently accepted.
-
-The remaining findings below are still useful as follow-up work.
+The OCR phase is now usable for real development work, not just ad hoc debugging.
 
 ## What Is Already Good
 
-- OCR is isolated in a subprocess per PDF, which is a pragmatic way to contain CUDA instability.
-- The page-level output layout is useful for debugging and for downstream multimodal analysis.
-- The project keeps a merged `full_extracted.md` while also retaining page artifacts, which is the right general contract for later stages.
+- `src/ocr_engine.py` now has a clear responsibility: one OCR engine instance processes one PDF into a stable output layout.
+- `src/pipeline.py` now keeps the OCR model resident across multiple papers in the same run, which removes a major source of wasted startup time.
+- The page output contract is useful and consistent:
+  - `pages/page_n/original.jpg`
+  - `pages/page_n/result.mmd`
+  - `full_extracted.md`
+- OCR logs now stream directly from the active process, so long runs are observable instead of looking stalled.
+- The sample smoke-test script is now usable for local validation against the example paper in `test_folder/`.
 
-## Findings
+## Resolved Issues
 
-### 1. Whole-PDF rasterization is the main technical risk
+### 1. Runtime mismatch broke OCR decoding
+
+Status: fixed
+
+What changed:
+
+- The OCR environment was rebuilt to the DeepSeek-compatible stack.
+- `flash-attn==2.7.3` is now installed and available.
+- `src/ocr_engine.py` now selects `flash_attention_2` when available.
+
+Result:
+
+- `DeepSeek-OCR-2` now returns valid Markdown on the example paper instead of endless special-token output.
+
+### 2. Whole-PDF rasterization caused unnecessary memory risk
+
+Status: fixed
+
+What changed:
+
+- OCR now renders pages one at a time using `convert_from_path(..., first_page=n, last_page=n)`.
+
+Result:
+
+- Stage 2 no longer loads every page image into memory before OCR starts.
+
+### 3. Missing or bogus OCR output could be accepted as success
+
+Status: fixed
+
+What changed:
+
+- `src/ocr_engine.py` now requires `result.mmd` to exist.
+- OCR output is validated with `is_valid_ocr_text()`.
+
+Result:
+
+- Broken pages fail loudly instead of silently writing junk into `full_extracted.md`.
+
+### 4. The OCR model was reloaded for every PDF
+
+Status: fixed
+
+What changed:
+
+- `src/pipeline.py` now constructs one `OCREngine` and reuses it across all pending PDFs in the batch.
+
+Result:
+
+- Multi-paper OCR runs no longer pay full model load cost for every paper.
+
+## Remaining Findings
+
+### 1. One failed page still causes the whole paper output to be deleted
 
 Severity: high
 
 References:
 
-- `src/ocr_engine.py:54-68`
+- `src/pipeline.py`
+- `src/ocr_engine.py`
 
 Issue:
 
-- `convert_from_path(pdf_path, timeout=600)` loads the full PDF into memory before OCR begins.
-- For long papers, this means RAM pressure from all rendered page images before the model has processed even page 1.
-- The code then keeps those PIL images in memory while also saving each page to disk, so memory usage scales poorly with paper length.
+- If OCR fails on one page, the pipeline still removes the full paper output directory through `cleanup_partial_output()`.
+- Successfully completed earlier pages are lost.
 
 Why it matters:
 
-- This is the most likely reason Stage 2 will become unstable or slow as paper count and page count increase.
-- A single very long paper can fail even if per-page OCR would otherwise succeed.
+- This wastes long OCR runs.
+- It makes debugging one bad page expensive.
+- It is now the biggest reliability gap in Phase 2.
 
 Recommended change:
 
-- Process PDFs page by page instead of rendering the entire document upfront.
-- Use `convert_from_path(..., first_page=n, last_page=n)` or another streaming approach.
-- Release page objects immediately after each OCR call.
+- Add a page-level manifest such as `ocr_status.json`.
+- Keep successful page outputs.
+- Retry only failed pages.
+- Make clean deletion opt-in instead of the default recovery path.
 
-### 2. OCR success is not validated strongly enough
+### 2. The new in-process batch runner no longer has a hard per-paper timeout
 
 Severity: medium
 
 References:
 
-- `src/ocr_engine.py:96-112`
+- `src/pipeline.py`
 
 Issue:
 
-- If DeepSeek-OCR does not create `result.mmd`, the fallback is `str(res)`.
-- If `res` is `None`, the page is still treated as successful and the literal text `None` is written into the merged output.
-- That means a broken OCR page can be silently accepted as valid Stage 2 output.
+- The old subprocess-based OCR path had a timeout boundary per paper.
+- The new in-process runner removed model reload overhead, but it also removed that hard timeout isolation.
 
 Why it matters:
 
-- Silent data corruption is harder to detect than a hard failure.
-- Stage 3 can then analyze incomplete or invalid content without any warning.
+- A hanging OCR call can now stall the whole OCR batch.
+- This is the main tradeoff introduced by the performance fix.
 
 Recommended change:
 
-- Require `result.mmd` to exist and be non-empty.
-- If it is missing, raise a structured error and mark the page or paper as failed.
-- Add an explicit validation step before appending text to `full_extracted.md`.
+- Move Stage 2 to a persistent worker process with a queue.
+- Keep one loaded OCR model per worker, but preserve process-level timeout and recovery behavior.
 
-### 3. One page failure currently discards the whole paper
+### 3. Page rendering is still likely the next OCR speed bottleneck
 
 Severity: medium
 
 References:
 
-- `src/ocr_engine.py:114-117`
-- `main.py:104-126`
+- `src/ocr_engine.py`
 
 Issue:
 
-- Any page exception is re-raised from the OCR subprocess.
-- The orchestrator then removes the entire paper output directory.
-- Successful pages are lost even if only one page failed.
+- The code now renders one page at a time, which fixed memory pressure.
+- It still relies on `pdf2image` for each page render.
 
 Why it matters:
 
-- This increases rerun cost for long papers.
-- It prevents partial recovery and makes debugging specific bad pages harder.
+- This is safer than the previous design, but likely slower than an in-process PDF renderer such as PyMuPDF.
+- Once model reload overhead is removed, page rendering becomes a more visible part of total OCR time.
 
 Recommended change:
 
-- Keep a page-level manifest or checkpoint file.
-- Retry failed pages independently.
-- Preserve successful page outputs unless the user explicitly requests a clean rerun.
+- Benchmark `pdf2image` against a PyMuPDF-based page renderer.
+- If PyMuPDF is materially faster, switch Stage 2 rendering to it.
 
-### 4. OCR logs are captured, not streamed
+### 4. OCR always runs in a heavy, debug-friendly mode
 
 Severity: medium
 
 References:
 
-- `main.py:100-107`
+- `src/ocr_engine.py`
 
 Issue:
 
-- `subprocess.run(..., capture_output=True, ...)` buffers all OCR stdout and stderr in memory.
-- Developers do not see live OCR progress for a paper.
-- Large failure logs can also consume memory unnecessarily.
+- OCR currently uses:
+  - `base_size=1024`
+  - `image_size=768`
+  - `crop_mode=True`
+  - `save_results=True`
+- This is good for quality and debugging, but expensive for routine runs.
 
 Why it matters:
 
-- It makes long OCR runs feel stalled.
-- It complicates debugging on large batches or GPU failures.
+- It increases OCR runtime and disk I/O.
+- It makes smoke tests slower than necessary.
 
 Recommended change:
 
-- Stream stdout and stderr to the console or to per-paper log files.
-- Keep only a short error summary in the main orchestrator.
+- Add explicit OCR profiles such as:
+  - `fast`
+  - `default`
+  - `debug`
+- Allow `save_results=False` for non-debug runs.
+- Expose image sizing and crop behavior as CLI flags.
 
-### 5. The OCR workflow has too many overlapping entrypoints
-
-Severity: medium
-
-References:
-
-- `main.py`
-- `src/ocr_engine.py:126-176`
-- `run_ocr_robust.py`
-- `trad_ocr.py`
-
-Issue:
-
-- There are several ways to run Stage 2, but they are not clearly separated into production, debug, and experimental paths.
-- `main.py` is the real orchestrator, `src/ocr_engine.py` also has a batch mode, `run_ocr_robust.py` restarts OCR, and `trad_ocr.py` is a comparison script.
-
-Why it matters:
-
-- New contributors will have trouble knowing which entrypoint is authoritative.
-- Maintenance cost grows because behavior can drift between scripts.
-
-Recommended change:
-
-- Keep one supported OCR entrypoint.
-- Move legacy or experiment scripts into a `scripts/` or `experiments/` directory.
-- Document clearly which path is used in production.
-
-### 6. The OCR phase is not friendly to fresh-checkout developer workflows
+### 5. CUDA and local environment assumptions are still implicit
 
 Severity: low
 
 References:
 
-- `main.py:47-49`
+- `src/ocr_engine.py`
+- `scripts/local/test_example_paper.sh`
 
 Issue:
 
-- When contributors use `--skip-download`, `main.py` immediately lists `original_papers/`.
-- On a fresh checkout without that directory, the pipeline will fail before OCR starts.
+- The project now has a working CUDA OCR stack, but the setup expectations are still mostly encoded in scripts and environment state.
+- Stage 2 still assumes a valid CUDA device by default.
 
 Why it matters:
 
-- This is not a Stage 2 algorithm issue, but it does slow down OCR development and testing.
-- It makes the common workflow of dropping a few local PDFs into the repo less obvious than it should be.
+- New developers can still hit setup friction even though the core pipeline is fixed.
 
 Recommended change:
 
-- Create `original_papers/` if it is missing.
-- Print a clearer message when `--skip-download` is used without input PDFs.
-
-### 7. The OCR stage assumes CUDA without an explicit capability check
-
-Severity: low
-
-References:
-
-- `src/ocr_engine.py:16-21`
-- `src/ocr_engine.py:36-40`
-
-Issue:
-
-- `OCREngine` defaults to `device='cuda'` and then moves the model onto that device.
-- If a contributor does not have a compatible GPU setup, failure happens late and without a very explicit preflight check.
-
-Why it matters:
-
-- It increases setup friction for contributors who are trying to debug logic, layout, or output contracts on non-GPU machines.
-
-Recommended change:
-
-- Check `torch.cuda.is_available()` before model load.
-- Fail with a direct setup message or support a slower CPU fallback for development.
+- Add a clearer OCR environment section in the README if not already present.
+- Add an explicit preflight command for:
+  - GPU availability
+  - `flash_attn` import
+  - model load smoke test
 
 ## Suggested Priority Order
 
 ### Highest priority
 
-- Stream PDF pages instead of loading the entire document at once.
-- Validate OCR success strictly instead of accepting missing `result.mmd` files.
-- Preserve successful pages and retry only failed pages.
+- Preserve successful pages and retry failed pages instead of deleting the whole paper.
+- Restore timeout/recovery isolation with a persistent OCR worker model.
 
 ### Next priority
 
-- Stream OCR logs in real time.
-- Simplify the number of OCR entrypoints.
-- Improve fresh-checkout developer ergonomics.
+- Add OCR fast/default/debug modes.
+- Reduce page rendering overhead if profiling shows `pdf2image` is now the main bottleneck.
 
 ### Nice to have
 
-- Add a small regression test corpus with 2 or 3 PDFs.
-- Add a machine-readable OCR manifest per paper.
-- Add explicit runtime/config flags for OCR-only development work.
+- Add an OCR manifest per paper.
+- Add a tiny regression corpus and automated smoke tests for Phase 2.
+- Add explicit preflight checks for the OCR environment.
 
 ## Bottom Line
 
-The current Stage 2 design is workable for experimentation, but it is still closer to a research prototype than a stable developer platform. The biggest risks are memory behavior, silent acceptance of bad OCR output, and rerun cost when a single page fails. Those are the first areas I would tighten before building more functionality on top of this phase.
+Phase 2 is no longer blocked by the earlier runtime failure. The OCR stage now runs on the correct DeepSeek stack, uses FlashAttention 2, processes pages incrementally, and avoids reloading the model for every paper.
+
+The remaining OCR work is no longer about basic correctness. It is about hardening and speed:
+
+- recover cleanly from failed pages
+- keep timeout isolation without reintroducing model reload overhead
+- cut unnecessary rendering and I/O cost
+
+Those are the right next Phase 2 tasks.
