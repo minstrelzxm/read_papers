@@ -1,12 +1,11 @@
+import gc
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from tqdm import tqdm
 
 from src.analyzer import analyze_paper_folder, build_analyzer
-from src.ocr_engine import is_ocr_complete, paper_output_dir
+from src.ocr_engine import DEFAULT_OCR_MODEL, OCREngine, is_ocr_complete, paper_output_dir
 from src.scraper import download_papers, get_neurips_2025_papers
 
 
@@ -23,7 +22,11 @@ def run_pipeline(
     api_key=None,
     base_url=None,
     ocr_timeout=DEFAULT_OCR_TIMEOUT,
+    ocr_model_name=DEFAULT_OCR_MODEL,
+    ocr_device="cuda",
 ):
+    ocr_model_name = ocr_model_name or DEFAULT_OCR_MODEL
+
     base_dir = Path(__file__).resolve().parents[1]
     original_dir = base_dir / "original_papers"
     extracted_dir = base_dir / "extracted_papers"
@@ -53,6 +56,41 @@ def run_pipeline(
 
     if not skip_ocr:
         print("--- Step 2: OCR Processing ---")
+        pending_ocr_files = [
+            pdf_path
+            for pdf_path in pdf_files
+            if not is_ocr_complete(paper_output_dir(pdf_path, extracted_dir))
+        ]
+        if pending_ocr_files:
+            print(
+                f"Loading OCR engine once for {len(pending_ocr_files)} pending paper(s)..."
+            )
+            ocr_engine = OCREngine(model_name=ocr_model_name, device=ocr_device)
+        else:
+            print("All OCR outputs already exist. Skipping OCR engine load.")
+            ocr_engine = None
+    else:
+        ocr_engine = None
+
+    if not skip_ocr and ocr_engine is not None:
+        for pdf_path in tqdm(pdf_files, desc="OCR Pipeline"):
+            paper_name = pdf_path.stem
+            paper_dir = Path(paper_output_dir(pdf_path, extracted_dir))
+
+            if is_ocr_complete(paper_dir):
+                continue
+
+            print(f"Running OCR on {paper_name}...")
+            success = run_ocr_in_process(
+                ocr_engine,
+                pdf_path,
+                extracted_dir,
+                timeout=ocr_timeout,
+            )
+            if not success:
+                cleanup_partial_output(paper_dir)
+
+        ocr_engine = release_model_memory(ocr_engine)
 
     analyzer = None
     if not skip_analysis:
@@ -64,36 +102,24 @@ def run_pipeline(
             base_url=base_url,
         )
 
-    for pdf_path in tqdm(pdf_files, desc="Processing Pipeline"):
-        paper_name = pdf_path.stem
-        paper_dir = Path(paper_output_dir(pdf_path, extracted_dir))
+        for pdf_path in tqdm(pdf_files, desc="Analysis Pipeline"):
+            paper_name = pdf_path.stem
+            paper_dir = Path(paper_output_dir(pdf_path, extracted_dir))
 
-        if not skip_ocr and not is_ocr_complete(paper_dir):
-            print(f"Running OCR on {paper_name}...")
-            success = run_ocr_subprocess(
-                pdf_path,
-                extracted_dir,
-                timeout=ocr_timeout,
-            )
-            if not success:
-                cleanup_partial_output(paper_dir)
+            if not is_ocr_complete(paper_dir):
+                print(f"Cannot analyze {paper_name}: No extracted text.")
                 continue
 
-        if skip_analysis or analyzer is None:
-            continue
+            if is_analysis_complete(paper_dir):
+                continue
 
-        if not is_ocr_complete(paper_dir):
-            print(f"Cannot analyze {paper_name}: No extracted text.")
-            continue
+            print(f"Analyzing {paper_name}...")
+            try:
+                analyze_paper_folder(paper_dir, analyzer)
+            except Exception as exc:
+                print(f"Analysis failed for {paper_name}: {exc}")
 
-        if is_analysis_complete(paper_dir):
-            continue
-
-        print(f"Analyzing {paper_name}...")
-        try:
-            analyze_paper_folder(paper_dir, analyzer)
-        except Exception as exc:
-            print(f"Analysis failed for {paper_name}: {exc}")
+        analyzer = release_model_memory(analyzer)
 
     print("Pipeline Completed.")
 
@@ -110,29 +136,37 @@ def is_analysis_complete(paper_dir):
     return report_path.exists() and report_path.stat().st_size > 0
 
 
-def run_ocr_subprocess(pdf_path, extracted_dir, timeout=DEFAULT_OCR_TIMEOUT):
-    ocr_script = Path(__file__).resolve().with_name("ocr_engine.py")
-    cmd = [
-        sys.executable,
-        str(ocr_script),
-        str(pdf_path),
-        str(extracted_dir),
-    ]
+def run_ocr_in_process(ocr_engine, pdf_path, extracted_dir, timeout=DEFAULT_OCR_TIMEOUT):
+    if ocr_engine is None:
+        print("OCR engine is unavailable.")
+        return False
+
+    if timeout != DEFAULT_OCR_TIMEOUT:
+        print("Per-paper OCR timeout is not enforced in the in-process batch runner.")
 
     try:
-        result = subprocess.run(cmd, timeout=timeout, check=False)
-    except subprocess.TimeoutExpired:
-        print(f"OCR Timed out for {Path(pdf_path).stem}")
-        return False
+        return bool(ocr_engine.process_pdf(pdf_path, extracted_dir))
     except Exception as exc:
-        print(f"Error launching OCR subprocess for {Path(pdf_path).stem}: {exc}")
+        print(f"OCR failed for {Path(pdf_path).stem}: {exc}")
         return False
 
-    if result.returncode != 0:
-        print(f"OCR failed for {Path(pdf_path).stem}")
-        return False
 
-    return True
+def release_model_memory(model_holder):
+    if model_holder is None:
+        return None
+
+    del model_holder
+    gc.collect()
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    return None
 
 
 def cleanup_partial_output(paper_dir):

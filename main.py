@@ -47,6 +47,16 @@ def main():
         default=None,
         help="Base URL for OpenAI-compatible providers",
     )
+    parser.add_argument(
+        "--ocr-model",
+        default=None,
+        help="OCR model name",
+    )
+    parser.add_argument(
+        "--ocr-device",
+        default="cuda",
+        help="Torch device for OCR",
+    )
 
     args = parser.parse_args()
 
@@ -59,6 +69,8 @@ def main():
         model_name=args.model,
         api_key=args.api_key,
         base_url=args.base_url,
+        ocr_model_name=args.ocr_model,
+        ocr_device=args.ocr_device,
     )
 
 
