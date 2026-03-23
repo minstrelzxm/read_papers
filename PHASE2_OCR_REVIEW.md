@@ -14,6 +14,21 @@ Sanity check:
 - `python -m py_compile main.py src/scraper.py src/ocr_engine.py src/analyzer.py run_ocr_robust.py trad_ocr.py` passed.
 - I did not find syntax errors.
 
+## Status After The OCR Runtime Fix
+
+The original OCR failure was caused by a runtime mismatch, not by the per-page OCR loop itself:
+
+- `DeepSeek-OCR-2` was being run on `transformers==5.3.0`, which produced repeated `<｜begin▁of▁sentence｜>` output instead of real Markdown.
+- Rebuilding `./.conda` to the official-style DeepSeek stack (`torch==2.6.0`, `transformers==4.46.3`, `tokenizers==0.20.3`) restored valid OCR output.
+- `flash-attn==2.7.3` still cannot be installed on this host because `nvcc` and `CUDA_HOME` are unavailable, so the code currently uses eager attention as a host-compatible fallback.
+
+The following earlier issues are now fixed in code:
+
+- PDFs are rendered one page at a time instead of rasterizing the full document up front.
+- Invalid special-token OCR output is rejected instead of being silently accepted.
+
+The remaining findings below are still useful as follow-up work.
+
 ## What Is Already Good
 
 - OCR is isolated in a subprocess per PDF, which is a pragmatic way to contain CUDA instability.

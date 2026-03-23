@@ -2,6 +2,7 @@
 original_papers/
 extracted_papers/
 failed_downloads.txt
+test_folder
 
 # Python environment and cache
 .conda/
